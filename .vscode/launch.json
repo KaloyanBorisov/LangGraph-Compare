@@ -1,0 +1,86 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Basic Chatbot",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/architectures/main.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Supervision Architecture",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/architectures/main_supervision.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Hierarchical Teams",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/architectures/main_hierarchical_teams.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Network Architecture",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/architectures/main_network.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Tavily Architecture",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/architectures/main_tavily.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Reflexion - Research",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/reflexion/research.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Reflexion - Code",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/reflexion/code.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Reflexion - Math",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/reflexion/math.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Compare Architectures",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/compare_arch/compare.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Run Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["tests/", "-v"],
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    }
+  ]
+}

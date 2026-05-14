@@ -1,0 +1,15 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: langgraph-compare-dev
+    container_name: langgraph-compare-dev
+    volumes:
+      - .:/app
+    env_file:
+      - path: .env
+        required: false
+    stdin_open: true
+    tty: true
+    command: bash
