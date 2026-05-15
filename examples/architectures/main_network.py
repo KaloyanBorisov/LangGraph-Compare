@@ -14,20 +14,18 @@ from langgraph.prebuilt import create_react_agent
 
 from langgraph_compare import *
 
+# Create the experiment folder and SQLite checkpointer for run logging.
 exp = create_experiment("network")
 memory = exp.memory
 
-# Inicjalizacja .env
+# Load API keys from .env (OPENAI_API_KEY, TAVILY_API_KEY).
 load_dotenv()
 
-
-### FAKTYCZNY GRAF ###
-
-# DEFINIOWANIE TOOLI
+# Tavily web search — the researcher uses this to fetch real-time data.
 tavily_tool = TavilySearchResults(max_results=1)
 
-# Warning: This executes code locally, which can be unsafe when not sandboxed
-
+# Python REPL — the chart generator uses this to execute matplotlib code.
+# Warning: executes code locally; unsafe outside a sandbox.
 repl = PythonREPL()
 
 @tool
@@ -45,8 +43,9 @@ def python_repl_tool(
         result_str + "\n\nIf you have completed all tasks, respond with FINAL ANSWER."
     )
 
-# DEFINIOWANIE WĘZŁÓW
 
+# Shared system prompt injected into every agent.
+# Agents signal completion by prefixing their response with "FINAL ANSWER".
 def make_system_prompt(suffix: str) -> str:
     return (
         "You are a helpful AI assistant, collaborating with other assistants."
@@ -60,13 +59,16 @@ def make_system_prompt(suffix: str) -> str:
 
 llm = ChatOpenAI(model="gpt-4o")
 
+# Routing helper: if the last message contains "FINAL ANSWER" the work is done,
+# otherwise pass control to the next agent.
 def get_next_node(last_message: BaseMessage, goto: str):
     if "FINAL ANSWER" in last_message.content:
-        # Any agent decided the work is done
         return END
     return goto
 
-# Research agent and node
+
+# Research agent — equipped with Tavily to search the web.
+# Its node returns a Command that routes to chart_generator (or END).
 research_agent = create_react_agent(
     llm,
     tools=[tavily_tool],
@@ -81,20 +83,20 @@ def research_node(
 ) -> Command[Literal["chart_generator", END]]:
     result = research_agent.invoke(state)
     goto = get_next_node(result["messages"][-1], "chart_generator")
-    # wrap in a human message, as not all providers allow
-    # AI message at the last position of the input messages list
+    # Re-wrap the last AI message as HumanMessage — some providers reject
+    # an AI message in the last position of the input list.
     result["messages"][-1] = HumanMessage(
         content=result["messages"][-1].content, name="researcher"
     )
+    # Command updates shared state with the agent's messages and sets the next node.
     return Command(
-        update={
-            # share internal message history of research agent with other agents
-            "messages": result["messages"],
-        },
+        update={"messages": result["messages"]},
         goto=goto,
     )
 
-# Chart generator agent and node
+
+# Chart generator agent — equipped with a Python REPL to produce charts.
+# Its node returns a Command that routes back to researcher (or END).
 # NOTE: THIS PERFORMS ARBITRARY CODE EXECUTION, WHICH CAN BE UNSAFE WHEN NOT SANDBOXED
 chart_agent = create_react_agent(
     llm,
@@ -107,29 +109,25 @@ chart_agent = create_react_agent(
 def chart_node(state: MessagesState) -> Command[Literal["researcher", END]]:
     result = chart_agent.invoke(state)
     goto = get_next_node(result["messages"][-1], "researcher")
-    # wrap in a human message, as not all providers allow
-    # AI message at the last position of the input messages list
+    # Re-wrap for the same provider-compatibility reason as research_node.
     result["messages"][-1] = HumanMessage(
         content=result["messages"][-1].content, name="chart_generator"
     )
     return Command(
-        update={
-            # share internal message history of chart agent with other agents
-            "messages": result["messages"],
-        },
+        update={"messages": result["messages"]},
         goto=goto,
     )
 
-# DEFINIOWANIE GRAFU
 
+# Network (peer-to-peer) graph: no central supervisor.
+# Agents hand off directly to each other via Command.goto until one signals FINAL ANSWER.
 workflow = StateGraph(MessagesState)
 workflow.add_node("researcher", research_node)
 workflow.add_node("chart_generator", chart_node)
 
+# Researcher always goes first; routing from there is driven by Command returns.
 workflow.add_edge(START, "researcher")
 graph = workflow.compile(checkpointer=memory)
-
-### FAKTYCZNY WORKFLOW ###
 
 user_input = {
     "messages": [
@@ -140,19 +138,24 @@ user_input = {
     ]
 }
 
+print()
 run_multiple_iterations(graph=graph, starting_thread_id=1, num_repetitions=3, user_input_template=user_input,
                         recursion_limit=150)
+print()
 
+# Both nodes must be declared so the exporter captures all events.
 graph_config = GraphConfig(
-    nodes=['researcher','chart_generator']
+    nodes=['researcher', 'chart_generator']
 )
 
+# ETL pipeline: SQLite → JSON → CSV event log.
 prepare_data(exp, graph_config)
 
-# ANALIZA
+# Load the event log and print all process mining metrics.
 print()
 event_log = load_event_log(exp)
 print_analysis(event_log)
 print()
 
+# Generate JSON reports and PNG visualizations (mermaid, prefix tree, DFG).
 generate_artifacts(event_log, graph, exp)

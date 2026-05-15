@@ -19,20 +19,19 @@ from langgraph.prebuilt import create_react_agent
 
 from langgraph_compare import *
 
+# Create experiment folder and SQLite checkpointer for run logging.
 exp = create_experiment("hierarchical")
 memory = exp.memory
 
-# Inicjalizacja .env
+# Load API keys from .env (OPENAI_API_KEY, TAVILY_API_KEY).
 load_dotenv()
 
-#####
-# TWORZENIE NARZĘDZI
-#####
+# ─── TOOLS ────────────────────────────────────────────────────────────────────
 
+# Tavily for real-time web search (Research Team).
 tavily_tool = TavilySearchResults(max_results=5)
 
 
-# ZESPÓŁ BADAWCZY
 @tool
 def scrape_webpages(urls: List[str]) -> str:
     """Use requests and bs4 to scrape the provided web pages for detailed information."""
@@ -46,7 +45,7 @@ def scrape_webpages(urls: List[str]) -> str:
     )
 
 
-# ZESPÓŁ PISZĄCY DOKUMENTY
+# Shared temp directory — all document writing tools read/write files here.
 _TEMP_DIRECTORY = TemporaryDirectory()
 WORKING_DIRECTORY = Path(_TEMP_DIRECTORY.name)
 
@@ -97,26 +96,21 @@ def edit_document(
     ],
 ) -> Annotated[str, "Path of the edited document file."]:
     """Edit a document by inserting text at specific line numbers."""
-
     with (WORKING_DIRECTORY / file_name).open("r") as file:
         lines = file.readlines()
-
     sorted_inserts = sorted(inserts.items())
-
     for line_number, text in sorted_inserts:
         if 1 <= line_number <= len(lines) + 1:
             lines.insert(line_number - 1, text + "\n")
         else:
             return f"Error: Line number {line_number} is out of range."
-
     with (WORKING_DIRECTORY / file_name).open("w") as file:
         file.writelines(lines)
-
     return f"Document edited and saved to {file_name}"
 
 
-# Warning: This executes code locally, which can be unsafe when not sandboxed
-
+# Python REPL for chart generation (Paper Writing Team).
+# Warning: executes code locally — unsafe outside a sandbox.
 repl = PythonREPL()
 
 
@@ -133,11 +127,12 @@ def python_repl(
     return f"Successfully executed:\n\`\`\`python\n{code}\n\`\`\`\nStdout: {result}"
 
 
-#####
-# FUNKCJE POMOCNICZE
-#####
+# ─── SHARED HELPERS ───────────────────────────────────────────────────────────
+
 llm = ChatOpenAI(model="gpt-4o-mini")
 
+# Token trimmer keeps conversation history under 100k tokens so the LLM
+# doesn't exceed its context window on long multi-agent runs.
 trimmer = trim_messages(
     max_tokens=100000,
     strategy="last",
@@ -146,6 +141,8 @@ trimmer = trim_messages(
 )
 
 
+# Each worker agent wraps its final message as HumanMessage so the
+# team supervisor receives it as a plain user turn, not an AI response.
 def agent_node(state, agent, name):
     result = agent.invoke(state)
     return {
@@ -154,8 +151,14 @@ def agent_node(state, agent, name):
 
 
 def create_team_supervisor(llm: ChatOpenAI, system_prompt, members) -> str:
-    """An LLM-based router."""
+    """Build a team supervisor chain using OpenAI function calling.
+
+    The supervisor receives the conversation and calls the 'route' function
+    to pick the next worker or FINISH — structured output without pydantic.
+    """
     options = ["FINISH"] + members
+    # OpenAI function definition that constrains the LLM's routing output
+    # to one of the valid team member names or FINISH.
     function_def = {
         "name": "route",
         "description": "Select the next role.",
@@ -184,6 +187,8 @@ def create_team_supervisor(llm: ChatOpenAI, system_prompt, members) -> str:
             ),
         ]
     ).partial(options=str(options), team_members=", ".join(members))
+    # bind_functions attaches the route schema so the LLM must call it,
+    # then JsonOutputFunctionsParser extracts the chosen "next" value.
     return (
         prompt
         | trimmer
@@ -191,27 +196,19 @@ def create_team_supervisor(llm: ChatOpenAI, system_prompt, members) -> str:
         | JsonOutputFunctionsParser()
     )
 
-#####
-# DEFINIOWANIE ZESPOŁÓW AGENTÓW
-#####
 
-### ZESPÓŁ BADAWCZY ###
-
-# TWORZENIE WĘZŁÓW I NADZORCY ZESPÓŁU
-
-# ResearchTeam graph state
-class ResearchTeamState(TypedDict):
-    # A message is added after each team member finishes
-    messages: Annotated[List[BaseMessage], operator.add]
-    # The team members are tracked so they are aware of
-    # the others' skill-sets
-    team_members: List[str]
-    # Used to route work. The supervisor calls a function
-    # that will update this every time it makes a decision
-    next: str
-
+# ─── RESEARCH TEAM ────────────────────────────────────────────────────────────
+# A self-contained subgraph with its own supervisor (rg_supervisor).
+# Workers: Search (Tavily) and WebScraper (HTML scraping).
 
 llm = ChatOpenAI(model="gpt-4o")
+
+# Shared state for the Research Team subgraph.
+class ResearchTeamState(TypedDict):
+    messages: Annotated[List[BaseMessage], operator.add]
+    team_members: List[str]
+    next: str  # supervisor routing decision
+
 
 search_agent = create_react_agent(llm, tools=[tavily_tool])
 search_node = functools.partial(agent_node, agent=search_agent, name="Search")
@@ -229,14 +226,12 @@ supervisor_agent = create_team_supervisor(
     ["Search", "WebScraper"],
 )
 
-# DODAWANIE WĘZŁÓW I KRAWĘDZI
-
 research_graph = StateGraph(ResearchTeamState)
 research_graph.add_node("Search", search_node)
 research_graph.add_node("WebScraper", research_node)
 research_graph.add_node("rg_supervisor", supervisor_agent)
 
-# Define the control flow
+# Workers always report back to their team supervisor.
 research_graph.add_edge("Search", "rg_supervisor")
 research_graph.add_edge("WebScraper", "rg_supervisor")
 research_graph.add_conditional_edges(
@@ -244,15 +239,12 @@ research_graph.add_conditional_edges(
     lambda x: x["next"],
     {"Search": "Search", "WebScraper": "WebScraper", "FINISH": END},
 )
-
-
 research_graph.add_edge(START, "rg_supervisor")
 chain = research_graph.compile(checkpointer=memory)
 
 
-# The following functions interoperate between the top level graph state
-# and the state of the research sub-graph
-# this makes it so that the states of each graph don't get intermixed
+# Adapter: the top-level graph passes a plain string; this wraps it into
+# the ResearchTeamState message format expected by the subgraph.
 def enter_chain(message: str):
     results = {
         "messages": [HumanMessage(content=message)],
@@ -263,26 +255,19 @@ def enter_chain(message: str):
 research_chain = enter_chain | chain
 
 
+# ─── PAPER WRITING TEAM ───────────────────────────────────────────────────────
+# A self-contained subgraph with its own supervisor (ag_supervisor).
+# Workers: DocWriter, NoteTaker, ChartGenerator — all share WORKING_DIRECTORY.
 
-### ZESPÓŁ PISZĄCY DOKUMENTY ###
-
-# TWORZENIE WĘZŁÓW I NADZORCY ZESPÓŁU
-
-# Document writing team graph state
+# Shared state for the Paper Writing Team subgraph.
 class DocWritingState(TypedDict):
-    # This tracks the team's conversation internally
     messages: Annotated[List[BaseMessage], operator.add]
-    # This provides each worker with context on the others' skill sets
     team_members: str
-    # This is how the supervisor tells langgraph who to work next
-    next: str
-    # This tracks the shared directory state
-    current_files: str
+    next: str  # supervisor routing decision
+    current_files: str  # snapshot of files written so far
 
 
-# This will be run before each worker agent begins work
-# It makes it so they are more aware of the current state
-# of the working directory.
+# Injected before each worker call so agents are aware of what's already on disk.
 def prelude(state):
     written_files = []
     if not WORKING_DIRECTORY.exists():
@@ -304,10 +289,10 @@ def prelude(state):
 
 llm = ChatOpenAI(model="gpt-4o")
 
+# Each writing agent is wrapped with prelude so it sees the current file listing.
 doc_writer_agent = create_react_agent(
     llm, tools=[write_document, edit_document, read_document]
 )
-# Injects current directory working state before each call
 context_aware_doc_writer_agent = prelude | doc_writer_agent
 doc_writing_node = functools.partial(
     agent_node, agent=context_aware_doc_writer_agent, name="DocWriter"
@@ -335,22 +320,15 @@ doc_writing_supervisor = create_team_supervisor(
     ["DocWriter", "NoteTaker", "ChartGenerator"],
 )
 
-# DODAWANIE WĘZŁÓW I KRAWĘDZI
-
-# Create the graph here:
-# Note that we have unrolled the loop for the sake of this doc
 authoring_graph = StateGraph(DocWritingState)
 authoring_graph.add_node("DocWriter", doc_writing_node)
 authoring_graph.add_node("NoteTaker", note_taking_node)
 authoring_graph.add_node("ChartGenerator", chart_generating_node)
 authoring_graph.add_node("ag_supervisor", doc_writing_supervisor)
 
-# Add the edges that always occur
 authoring_graph.add_edge("DocWriter", "ag_supervisor")
 authoring_graph.add_edge("NoteTaker", "ag_supervisor")
 authoring_graph.add_edge("ChartGenerator", "ag_supervisor")
-
-# Add the edges where routing applies
 authoring_graph.add_conditional_edges(
     "ag_supervisor",
     lambda x: x["next"],
@@ -361,14 +339,12 @@ authoring_graph.add_conditional_edges(
         "FINISH": END,
     },
 )
-
 authoring_graph.add_edge(START, "ag_supervisor")
 chain = authoring_graph.compile(checkpointer=memory)
 
 
-# The following functions interoperate between the top level graph state
-# and the state of the research sub-graph
-# this makes it so that the states of each graph don't get intermixed
+# Adapter: wraps the top-level string message and injects team_members list
+# into DocWritingState before entering the subgraph.
 def enter_chain(message: str, members: List[str]):
     results = {
         "messages": [HumanMessage(content=message)],
@@ -377,17 +353,16 @@ def enter_chain(message: str, members: List[str]):
     return results
 
 
-# We reuse the enter/exit functions to wrap the graph
 authoring_chain = (
     functools.partial(enter_chain, members=authoring_graph.nodes)
     | authoring_graph.compile(checkpointer=memory)
 )
 
-#####
-# DODANIE WARSTW
-#####
 
-# TWORZENIE NADZORCY ZESPOŁÓW
+# ─── TOP-LEVEL GRAPH ──────────────────────────────────────────────────────────
+# A meta-supervisor (test_supervisor) routes between the two team subgraphs.
+# This is the hierarchical layer: supervisor-of-supervisors pattern.
+
 from langchain_core.messages import BaseMessage
 from langchain_openai.chat_models import ChatOpenAI
 
@@ -403,33 +378,32 @@ supervisor_node = create_team_supervisor(
     ["ResearchTeam", "PaperWritingTeam"],
 )
 
-# TWORZENIE KOŃCOWEGO GRAFU
-
-# Top-level graph state
+# Top-level state: shared message history and the meta-supervisor's routing decision.
 class State(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
     next: str
 
 
 def get_last_message(state: State) -> str:
+    # Extract the latest message content to pass as input to a subgraph.
     return state["messages"][-1].content
 
 
 def join_graph(response: dict):
+    # Collapse the subgraph's full message list to just its final message
+    # so the top-level history doesn't grow unboundedly.
     return {"messages": [response["messages"][-1]]}
 
 
-# Define the graph.
 super_graph = StateGraph(State)
-# First add the nodes, which will do the work
+# Each team node is a pipeline: extract message → run subgraph → collapse output.
 super_graph.add_node("ResearchTeam", get_last_message | research_chain | join_graph)
 super_graph.add_node(
     "PaperWritingTeam", get_last_message | authoring_chain | join_graph
 )
 super_graph.add_node("test_supervisor", supervisor_node)
 
-# Define the graph connections, which controls how the logic
-# propagates through the program
+# Teams always report back to the meta-supervisor after finishing.
 super_graph.add_edge("ResearchTeam", "test_supervisor")
 super_graph.add_edge("PaperWritingTeam", "test_supervisor")
 super_graph.add_conditional_edges(
@@ -444,23 +418,6 @@ super_graph.add_conditional_edges(
 super_graph.add_edge(START, "test_supervisor")
 super_graph = super_graph.compile(checkpointer=memory)
 
-# config = {"configurable": {"thread_id": "15"},"recursion_limit": 150}
-#
-# for s in super_graph.stream(
-#     {
-#         "messages": [
-#             HumanMessage(
-#                 content="Write a brief research report on the North American sturgeon. Include a chart."
-#             )
-#         ],
-#     },
-#     config,
-# ):
-#     if "__end__" not in s:
-#         print(s)
-#         print("---")
-
-
 user_input = {
     "messages": [
         HumanMessage(
@@ -474,12 +431,14 @@ run_multiple_iterations(graph=super_graph, starting_thread_id=1, num_repetitions
                         recursion_limit=150)
 print()
 
+# ─── PROCESS MINING CONFIG ────────────────────────────────────────────────────
+# Three supervisor levels: one graph-level meta-supervisor and two subgraph supervisors.
+
 test_supervisor = SupervisorConfig(
     name="test_supervisor",
     supervisor_type="graph"
 )
 
-# ResearchTeam subgraph supervisor
 rg_supervisor = SupervisorConfig(
     name="rg_supervisor",
     supervisor_type="subgraph"
@@ -490,31 +449,33 @@ ag_supervisor = SupervisorConfig(
     supervisor_type="subgraph"
 )
 
-# ResearchTeam subgraph
+# ResearchTeam subgraph: Search + WebScraper workers under rg_supervisor.
 research_team = SubgraphConfig(
     name="ResearchTeam",
     nodes=["Search", "WebScraper"],
     supervisor=rg_supervisor
 )
 
+# PaperWritingTeam subgraph: DocWriter + NoteTaker + ChartGenerator under ag_supervisor.
 authoring_team = SubgraphConfig(
     name="PaperWritingTeam",
-    nodes=["DocWriter", "NoteTaker","ChartGenerator"],
+    nodes=["DocWriter", "NoteTaker", "ChartGenerator"],
     supervisor=ag_supervisor
 )
 
-# Complete graph configuration
 graph_config = GraphConfig(
     supervisors=[test_supervisor],
     subgraphs=[research_team, authoring_team]
 )
 
+# ETL pipeline: SQLite → JSON → CSV event log.
 prepare_data(exp, graph_config)
 
-# ANALIZA
+# Load the event log and print all process mining metrics.
 print()
 event_log = load_event_log(exp)
 print_analysis(event_log)
 print()
 
+# Generate JSON reports and PNG visualizations (mermaid, prefix tree, DFG).
 generate_artifacts(event_log, super_graph, exp)

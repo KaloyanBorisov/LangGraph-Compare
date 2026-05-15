@@ -16,39 +16,35 @@ from typing_extensions import TypedDict
 from langchain_core.messages import BaseMessage
 from langgraph.graph import END, StateGraph, START
 from langgraph.prebuilt import create_react_agent
+from typing import Union
+import functools as _functools
 
 from langgraph_compare import *
 
+# Create experiment folder and SQLite checkpointer for run logging.
 exp = create_experiment("supervision")
 memory = exp.memory
 
-# Inicjalizacja .env
+# Load API keys from .env (OPENAI_API_KEY, TAVILY_API_KEY).
 load_dotenv()
 
-
-#####
-# TWORZENIE NARZĘDZI
-#####
-
+# Tavily for real-time web search; PythonREPLTool for executing code locally.
+# Warning: PythonREPLTool runs arbitrary code — unsafe outside a sandbox.
 tavily_tool = TavilySearchResults(max_results=5)
-
-# This executes code locally, which can be unsafe
 python_repl_tool = PythonREPLTool()
 
-#####
-# FUNKCJE POMOCNICZE
-#####
 
+# Each worker agent returns its result wrapped as a HumanMessage so the
+# supervisor sees it as a plain message, not an AI response.
 def agent_node(state, agent, name):
     result = agent.invoke(state)
     return {
         "messages": [HumanMessage(content=result["messages"][-1].content, name=name)]
     }
 
-#####
-# TWORZENIE AGENTA NADZORUJĄCEGO
-####
 
+# The supervisor chooses which worker acts next, or signals FINISH when done.
+# options lists all valid routing targets including the terminal state.
 members = ["Researcher", "Coder"]
 system_prompt = (
     "You are a supervisor tasked with managing a conversation between the"
@@ -57,15 +53,20 @@ system_prompt = (
     " task and respond with their results and status. When finished,"
     " respond with FINISH."
 )
-# Our team supervisor is an LLM node. It just picks the next agent to process
-# and decides when the work is completed
 options = ["FINISH"] + members
 
+# Python 3.10-compatible dynamic Literal: reduce options list into a Union of Literals.
+# Equivalent to Literal["FINISH", "Researcher", "Coder"] but built at runtime.
+_NextLiteral = _functools.reduce(lambda a, b: Union[a, Literal[b]], options[1:], Literal[options[0]])
 
+# Structured output schema — the supervisor LLM must return exactly this shape,
+# forcing it to pick one of the valid options as the next worker.
 class routeResponse(BaseModel):
-    next: Literal[*options]
+    next: _NextLiteral
 
 
+# Prompt feeds the supervisor the full conversation history plus a final
+# instruction to pick the next worker or FINISH.
 prompt = ChatPromptTemplate.from_messages(
     [
         ("system", system_prompt),
@@ -78,31 +79,28 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 ).partial(options=str(options), members=", ".join(members))
 
-
+# gpt-4o used here (not mini) because the supervisor requires reliable structured output.
 llm = ChatOpenAI(model="gpt-4o")
 
 
+# Supervisor node: runs the prompt → LLM pipeline and returns the routing decision.
+# with_structured_output forces the LLM to return a valid routeResponse JSON.
 def supervisor_agent(state):
     supervisor_chain = prompt | llm.with_structured_output(routeResponse)
     return supervisor_chain.invoke(state)
 
-#####
-# KONSTRUKCJA GRAFU
-####
 
-# The agent state is the input to each node in the graph
+# Shared state: accumulated message history plus the supervisor's current routing decision.
 class AgentState(TypedDict):
-    # The annotation tells the graph that new messages will always
-    # be added to the current states
     messages: Annotated[Sequence[BaseMessage], operator.add]
-    # The 'next' field indicates where to route to next
     next: str
 
 
+# Researcher agent — searches the web with Tavily.
 research_agent = create_react_agent(llm, tools=[tavily_tool])
 research_node = functools.partial(agent_node, agent=research_agent, name="Researcher")
 
-# NOTE: THIS PERFORMS ARBITRARY CODE EXECUTION. PROCEED WITH CAUTION
+# Coder agent — writes and executes Python code via the REPL.
 code_agent = create_react_agent(llm, tools=[python_repl_tool])
 code_node = functools.partial(agent_node, agent=code_agent, name="Coder")
 
@@ -111,32 +109,22 @@ workflow.add_node("Researcher", research_node)
 workflow.add_node("Coder", code_node)
 workflow.add_node("supervisor", supervisor_agent)
 
-#####
-# ŁĄCZENIE KRAWĘDZI
-#####
+# Every worker always reports back to the supervisor after finishing its task.
 for member in members:
-    # We want our workers to ALWAYS "report back" to the supervisor when done
     workflow.add_edge(member, "supervisor")
-# The supervisor populates the "next" field in the graph state
-# which routes to a node or finishes
+
+# The supervisor's "next" field drives the conditional routing:
+# "Researcher" → Researcher node, "Coder" → Coder node, "FINISH" → END.
 conditional_map = {k: k for k in members}
 conditional_map["FINISH"] = END
 workflow.add_conditional_edges("supervisor", lambda x: x["next"], conditional_map)
-# Finally, add entrypoint
+
+# Supervisor is the entry point — it decides who acts first.
 workflow.add_edge(START, "supervisor")
 
 graph = workflow.compile(checkpointer=memory)
-# config = {"configurable": {"thread_id": "10"},"recursion_limit": 100}
-#
-# for s in graph.stream(
-#     {"messages": [HumanMessage(content="Code hello world and print it to the terminal")]},
-#     config
-# ):
-#     if "__end__" not in s:
-#         print(s)
-#         print("----")
 
-
+# Run 3 iterations of a coding task.
 user_input = {
     "messages": [
         HumanMessage(
@@ -148,15 +136,7 @@ user_input = {
 run_multiple_iterations(graph=graph, starting_thread_id=1, num_repetitions=3, user_input_template=user_input,
                         recursion_limit=100)
 
-# for s in graph.stream(
-#     {"messages": [HumanMessage(content="Write a brief research report on pikas.")]},
-#     config,
-# ):
-#     if "__end__" not in s:
-#         print(s)
-#         print("----")
-
-
+# Run 3 more iterations of a research task (thread IDs 4–6).
 user_input = {
     "messages": [
         HumanMessage(
@@ -170,6 +150,7 @@ run_multiple_iterations(graph=graph, starting_thread_id=4, num_repetitions=3, us
                         recursion_limit=100)
 print()
 
+# supervisor is the graph-level supervisor; Researcher and Coder are worker nodes.
 supervisor = SupervisorConfig(
     name="supervisor",
     supervisor_type="graph"
@@ -180,12 +161,14 @@ graph_config = GraphConfig(
     nodes=["Researcher", "Coder"]
 )
 
+# ETL pipeline: SQLite → JSON → CSV event log.
 prepare_data(exp, graph_config)
 
-# ANALIZA
+# Load the event log and print all process mining metrics.
 print()
 event_log = load_event_log(exp)
 print_analysis(event_log)
 print()
 
+# Generate JSON reports and PNG visualizations (mermaid, prefix tree, DFG).
 generate_artifacts(event_log, graph, exp)
