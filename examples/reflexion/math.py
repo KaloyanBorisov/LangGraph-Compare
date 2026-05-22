@@ -26,6 +26,11 @@ from dotenv import load_dotenv
 
 from langgraph_compare import *
 
+import shutil, os
+_exp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "experiments", "math_100")
+if os.path.exists(_exp_dir):
+    shutil.rmtree(_exp_dir)
+
 exp = create_experiment("math_100")
 memory = exp.memory
 

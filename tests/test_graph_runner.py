@@ -46,6 +46,6 @@ def test_run_graph_iterations(mock_state_graph, capsys):
         "configurable": {"thread_id": str(starting_thread_id + 1)},
         "recursion_limit": recursion_limit
     }
-    mock_state_graph.stream.assert_any_call(user_input_template, expected_config1)
-    mock_state_graph.stream.assert_any_call(user_input_template, expected_config2)
+    mock_state_graph.stream.assert_any_call(user_input_template, expected_config1, stream_mode="values")
+    mock_state_graph.stream.assert_any_call(user_input_template, expected_config2, stream_mode="values")
     assert mock_state_graph.stream.call_count == num_repetitions, f"Expected {num_repetitions} calls to stream(), but got {mock_state_graph.stream.call_count}"
