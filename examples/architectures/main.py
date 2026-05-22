@@ -8,6 +8,12 @@ from langgraph.graph.message import add_messages
 
 from langgraph_compare import *
 
+# Delete previous run data so create_experiment doesn't raise FileExistsError.
+import shutil, os
+_exp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "experiments", "main")
+if os.path.exists(_exp_dir):
+    shutil.rmtree(_exp_dir)
+
 # Create the experiment folder structure (db, json, csv, img, reports)
 # and a SQLite checkpointer that LangGraph uses to persist run logs.
 exp = create_experiment("main")

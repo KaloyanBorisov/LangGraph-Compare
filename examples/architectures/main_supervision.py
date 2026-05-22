@@ -21,6 +21,12 @@ import functools as _functools
 
 from langgraph_compare import *
 
+# Delete previous run data so create_experiment doesn't raise FileExistsError.
+import shutil, os
+_exp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "experiments", "supervision")
+if os.path.exists(_exp_dir):
+    shutil.rmtree(_exp_dir)
+
 # Create experiment folder and SQLite checkpointer for run logging.
 exp = create_experiment("supervision")
 memory = exp.memory
@@ -124,23 +130,29 @@ workflow.add_edge(START, "supervisor")
 
 graph = workflow.compile(checkpointer=memory)
 
-# Run 3 iterations of a coding task.
+# Threads 1-3: research-only task — supervisor routes to Researcher then FINISH.
+# Baseline path: supervisor → Researcher → supervisor → END
 user_input = {
     "messages": [
         HumanMessage(
-            content="Code hello world and print it to the terminal"
+            content="Write a brief research report on the population of Warsaw."
         )
     ]
 }
 
+print()
 run_multiple_iterations(graph=graph, starting_thread_id=1, num_repetitions=3, user_input_template=user_input,
                         recursion_limit=100)
+print()
 
-# Run 3 more iterations of a research task (thread IDs 4–6).
+# Threads 4-6: research + code task — supervisor must coordinate both workers.
+# Handoff path: supervisor → Researcher → supervisor → Coder → supervisor → END
+# This shows the supervisor pattern properly: Coder depends on what Researcher found.
 user_input = {
     "messages": [
         HumanMessage(
-            content="Write a brief research report on pikas."
+            content="Find the current population of Warsaw, then write and run Python code to calculate "
+                    "how many years it will take to reach 2 million people assuming 1% annual growth."
         )
     ]
 }

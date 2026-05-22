@@ -10,6 +10,12 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from langgraph_compare import *
 
+# Delete previous run data so create_experiment doesn't raise FileExistsError.
+import shutil, os
+_exp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "experiments", "tavily")
+if os.path.exists(_exp_dir):
+    shutil.rmtree(_exp_dir)
+
 # Create experiment folder structure and SQLite checkpointer for run logging.
 exp = create_experiment("tavily")
 memory = exp.memory

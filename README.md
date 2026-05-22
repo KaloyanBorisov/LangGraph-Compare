@@ -239,13 +239,92 @@ Sample output:
 
 ## Supported Architecture Patterns
 
-The package ships with examples for:
+### Single-Agent / Linear Chain (`examples/architectures/main.py`)
 
-- **Linear** (`examples/architectures/main.py`) — single-node chatbot
-- **Supervisor** (`examples/architectures/main_supervision.py`) — supervisor routing to specialized agents
-- **Hierarchical teams** (`examples/architectures/main_hierarchical_teams.py`) — nested supervisor teams
-- **Network** (`examples/architectures/main_network.py`) — peer-to-peer agent network
-- **Reflexion** (`examples/reflexion/`) — draft → tool-call → revise loop with self-critique
+```
+START → chatbot_node → END
+```
+
+Single node, no tools, no routing. The LLM answers directly from its training data.
+
+**Use case:** Simple Q&A where real-time data or actions are not needed.  
+**Cost:** Lowest — one LLM call per run.
+
+---
+
+### ReAct — Reason + Act (`examples/architectures/main_tavily.py`)
+
+```
+START → chatbot_node ⇄ tools → END
+```
+
+ReAct loop — the LLM decides each turn whether to call Tavily web search or return a final answer. Can loop multiple times before finishing.
+
+**Use case:** Questions requiring real-time or up-to-date information.  
+**Cost:** Low to medium — scales with the number of search iterations.
+
+---
+
+### Supervisor / Hub-and-Spoke (`examples/architectures/main_supervision.py`)
+
+```
+START → supervisor → Researcher → supervisor
+                  ↘ Coder     → supervisor
+                  ↘ FINISH    → END
+```
+
+A central supervisor LLM routes between specialist workers. Workers always report back to the supervisor after each step. Routing is enforced via structured output (`routeResponse`).
+
+**Use case:** Tasks that require both research (Tavily) and code execution (Python REPL).  
+**Cost:** Medium to high — every worker call is preceded and followed by a supervisor call.
+
+---
+
+### Agent Network / Peer-to-Peer (`examples/architectures/main_network.py`)
+
+```
+START → researcher ⇄ chart_generator → END
+```
+
+Peer-to-peer — no central supervisor. Each agent returns a `Command` that directly sets the next node. Agents signal completion by prefixing their response with `FINAL ANSWER`.
+
+**Use case:** Two complementary agents collaborating in sequence (research → visualize).  
+**Cost:** Medium — no supervisor overhead, but agents may loop back and forth before finishing.
+
+---
+
+### Hierarchical Agent Teams (`examples/architectures/main_hierarchical_teams.py`)
+
+```
+START → test_supervisor → ResearchTeam    (subgraph: rg_supervisor → Search / WebScraper)
+                       ↘ PaperWritingTeam (subgraph: ag_supervisor → DocWriter / NoteTaker / ChartGenerator)
+                       ↘ FINISH → END
+```
+
+Three levels of supervision: a meta-supervisor routes between two full sub-teams, each of which has its own internal supervisor and worker agents. Sub-teams share a working directory for file-based handoffs.
+
+**Use case:** Long-horizon complex tasks — research a topic, then write and chart a full paper.  
+**Cost:** Highest — many LLM calls across 8 nodes and 3 supervisor layers.
+
+---
+
+### Summary
+
+| Architecture | Nodes | Supervisor levels | Tools | Complexity | Cost |
+|---|---|---|---|---|---|
+| Basic Chatbot | 1 | 0 | None | Lowest | $ |
+| Tavily | 2 | 0 | Web search | Low | $$ |
+| Supervision | 3 | 1 | Search + Code | Medium | $$$ |
+| Network | 2 | 0 (peer) | Search + Code | Medium | $$$ |
+| Hierarchical Teams | 8 | 3 (nested) | Search + Scrape + Docs + Code | Highest | $$$$ |
+
+The key design choice is how much coordination overhead you are willing to pay versus how complex the task is. Simpler architectures are cheaper and easier to debug; hierarchical architectures can tackle much harder tasks but multiply LLM calls at every level.
+
+---
+
+### Reflexion (`examples/reflexion/`)
+
+Draft → tool-call → revise loop with self-critique — the agent reflects on its own output and iterates until satisfied.
 
 ---
 

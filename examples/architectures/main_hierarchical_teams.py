@@ -19,6 +19,12 @@ from langgraph.prebuilt import create_react_agent
 
 from langgraph_compare import *
 
+# Delete previous run data so create_experiment doesn't raise FileExistsError.
+import shutil, os
+_exp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "experiments", "hierarchical")
+if os.path.exists(_exp_dir):
+    shutil.rmtree(_exp_dir)
+
 # Create experiment folder and SQLite checkpointer for run logging.
 exp = create_experiment("hierarchical")
 memory = exp.memory
