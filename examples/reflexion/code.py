@@ -26,6 +26,17 @@ from dotenv import load_dotenv
 
 from langgraph_compare import *
 
+# Reflexion workflow (Shinn et al. 2023):
+#   START → draft → execute_tools → revise → (loop back or END)
+#
+#   1. draft        – LLM produces an initial solution + code analysis + search queries
+#   2. execute_tools – Tavily runs the search queries and returns real web results
+#   3. revise       – LLM improves the solution using search results and its own critique
+#   4. event_loop   – repeats steps 2-3 up to MAX_ITERATIONS times, then ends
+#
+# The key insight: structured self-critique (technical gaps / security / optimization)
+# before searching means each search targets specific weaknesses, not random topics.
+
 import shutil, os
 _exp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "experiments", "programming_100")
 if os.path.exists(_exp_dir):
@@ -36,7 +47,7 @@ memory = exp.memory
 
 load_dotenv()
 
-# TOOLS
+# ── STEP 0: shared tools ──────────────────────────────────────────────────────
 llm = ChatOpenAI(model="gpt-4o-mini")
 # llm = ChatGroq(model="llama-3.1-8b-instant")
 # llm = ChatTogether(model="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo")
@@ -44,7 +55,9 @@ search = TavilySearchAPIWrapper()
 tavily_tool = TavilySearchResults(search=search, max_results=5)
 
 
-# INITIAL RESPONDER
+# ── STEP 1: structured output schemas ────────────────────────────────────────
+# Pydantic schemas enforce the "episodic memory" from the paper: the LLM must
+# commit its critique and search intent to structured fields before moving on.
 class CodeAnalysis(BaseModel):
     """Analysis of the proposed solution"""
     technical_gaps: str = Field(description="Identify technical gaps or potential issues in the implementation")
@@ -64,6 +77,8 @@ class ProgrammingAnswer(BaseModel):
     )
 
 
+# RevisedProgrammingAnswer extends the base schema with a required references field,
+# forcing the LLM to cite sources after searching — encourages grounded answers.
 class RevisedProgrammingAnswer(ProgrammingAnswer):
     """Provide an improved programming solution with references to documentation and best practices."""
 
@@ -72,6 +87,10 @@ class RevisedProgrammingAnswer(ProgrammingAnswer):
     )
 
 
+# ── STEP 2: actor with retries ────────────────────────────────────────────────
+# ResponderWithRetries wraps any LLM chain. If the model's output fails Pydantic
+# validation (wrong schema), the error + schema are injected as a ToolMessage and
+# the model is given another chance — up to 3 attempts total.
 class ResponderWithRetries:
     def __init__(self, runnable, validator):
         self.runnable = runnable
@@ -87,7 +106,7 @@ class ResponderWithRetries:
                 self.validator.invoke(response)
                 return {"messages": response}
             except ValidationError as e:
-                # Create new messages list with error response
+                # Feed the validation error back so the model can self-correct.
                 new_messages = state["messages"] + [
                     response,
                     ToolMessage(
@@ -101,7 +120,8 @@ class ResponderWithRetries:
         return {"messages": response}
 
 
-# Define system prompts
+# Shared prompt template used by both the drafter and the revisor.
+# {first_instruction} and {function_name} are swapped out per role.
 actor_prompt_template = ChatPromptTemplate.from_messages([
     (
         "system",
@@ -129,7 +149,7 @@ actor_prompt_template = ChatPromptTemplate.from_messages([
     time=lambda: datetime.datetime.now().isoformat(),
 )
 
-# Setup initial answer chain
+# draft node: produces the first solution + code analysis + search queries
 initial_answer_chain = (
         actor_prompt_template.partial(
             first_instruction="Provide a detailed programming solution with implementation details.",
@@ -140,7 +160,9 @@ initial_answer_chain = (
 validator = PydanticToolsParser(tools=[ProgrammingAnswer])
 first_responder = ResponderWithRetries(runnable=initial_answer_chain, validator=validator)
 
-# Setup revision chain
+# ── STEP 3: revisor ───────────────────────────────────────────────────────────
+# revise node: same prompt template, but now the conversation history includes
+# Tavily search results, so the LLM can ground its revised answer in real sources.
 revise_instructions = """Improve your programming solution using the additional research:
     - Update the implementation based on best practices and documentation
     - Add error handling and edge cases
@@ -161,7 +183,9 @@ revision_validator = PydanticToolsParser(tools=[RevisedProgrammingAnswer])
 revisor = ResponderWithRetries(runnable=revision_chain, validator=revision_validator)
 
 
-# TOOL NODE
+# ── STEP 4: tool execution node ───────────────────────────────────────────────
+# execute_tools node: runs all search queries the LLM produced in bulk.
+# Both ProgrammingAnswer and RevisedProgrammingAnswer calls are routed here.
 def run_queries(search_queries: list[str], **kwargs):
     """Run the generated queries."""
     return tavily_tool.batch([{"query": query} for query in search_queries])
@@ -173,12 +197,14 @@ tool_node = ToolNode([
 ])
 
 
-# CONSTRUCT GRAPH
+# ── STEP 5: graph wiring ──────────────────────────────────────────────────────
+# The graph encodes the Reflexion loop:
+#   draft → execute_tools → revise → (back to execute_tools, or END)
 class State(TypedDict):
     messages: Annotated[list, add_messages]
 
 
-MAX_ITERATIONS = 5
+MAX_ITERATIONS = 5  # cap total draft+revise cycles to avoid runaway costs
 builder = StateGraph(State)
 
 builder.add_node("draft", first_responder.respond)
@@ -190,10 +216,11 @@ builder.add_edge("draft", "execute_tools")
 builder.add_edge("execute_tools", "revise")
 
 
-def get_num_iterations(state: list):
-    """Count the number of iterations in the current state."""
+def get_num_iterations(messages: list):
+    # Count consecutive tool/ai messages from the end — each draft+search+revise
+    # cycle adds 2 AI messages and 1 tool message, so this tracks loop depth.
     i = 0
-    for m in state[::-1]:
+    for m in messages[::-1]:
         if m.type not in {"tool", "ai"}:
             break
         i += 1
@@ -201,6 +228,7 @@ def get_num_iterations(state: list):
 
 
 def event_loop(state: dict):
+    # After each revision, decide whether to search again or stop.
     num_iterations = get_num_iterations(state["messages"])
     if num_iterations > MAX_ITERATIONS:
         return END
@@ -210,7 +238,7 @@ def event_loop(state: dict):
 builder.add_conditional_edges("revise", event_loop, ["execute_tools", END])
 graph = builder.compile(checkpointer=memory)
 
-# Example usage
+# ── RUN ───────────────────────────────────────────────────────────────────────
 user_input = {"messages": [("user", "How do I implement a secure REST API with rate limiting in Python?")]}
 
 print()
@@ -223,7 +251,7 @@ graph_config = GraphConfig(
 
 prepare_data(exp, graph_config)
 
-# ANALYSIS
+# ── ANALYSIS ──────────────────────────────────────────────────────────────────
 print()
 event_log = load_event_log(exp)
 print_analysis(event_log)

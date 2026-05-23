@@ -26,6 +26,17 @@ from dotenv import load_dotenv
 
 from langgraph_compare import *
 
+# Reflexion workflow (Shinn et al. 2023):
+#   START → draft → execute_tools → revise → (loop back or END)
+#
+#   1. draft        – LLM produces an initial answer + self-critique + search queries
+#   2. execute_tools – Tavily runs the search queries and returns real web results
+#   3. revise       – LLM improves the answer using the search results and its own critique
+#   4. event_loop   – repeats steps 2-3 up to MAX_ITERATIONS times, then ends
+#
+# The key insight: forcing structured self-reflection (missing / superfluous) before
+# searching means the LLM targets its own blind spots rather than searching at random.
+
 import shutil, os
 
 _exp_dir = os.path.join(
@@ -41,7 +52,9 @@ memory = exp.memory
 
 load_dotenv()
 
-# TOOLS
+# ── STEP 0: shared tools ──────────────────────────────────────────────────────
+# Tavily is the external evaluator: it grounds the LLM's self-critique in real
+# web results, closing the feedback loop between reflection and revision.
 llm = ChatOpenAI(model="gpt-4o-mini")
 # llm = ChatGroq(model="llama-3.1-8b-instant")
 # llm = ChatTogether(model="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo")
@@ -49,7 +62,10 @@ search = TavilySearchAPIWrapper()
 tavily_tool = TavilySearchResults(search=search, max_results=5)
 
 
-# INITIAL RESPONDER
+# ── STEP 1: structured output schemas ────────────────────────────────────────
+# Pydantic schemas act as the "episodic memory" from the paper: the LLM is
+# forced to commit its critique and search intent to structured fields, which
+# are then carried forward into the next revision cycle.
 class Reflection(BaseModel):
     missing: str = Field(description="Critique of what is missing.")
     superfluous: str = Field(description="Critique of what is superfluous")
@@ -65,7 +81,8 @@ class AnswerQuestion(BaseModel):
     )
 
 
-# Extend the initial answer schema to include references.
+# ReviseAnswer extends AnswerQuestion with a required references field, forcing
+# the LLM to cite sources after searching — encourages grounded, verifiable answers.
 class ReviseAnswer(AnswerQuestion):
     """Revise your original answer to your question. Provide an answer, reflection,
     cite your reflection with references, and finally
@@ -76,6 +93,10 @@ class ReviseAnswer(AnswerQuestion):
     )
 
 
+# ── STEP 2: actor with retries ────────────────────────────────────────────────
+# ResponderWithRetries wraps any LLM chain. If the model's output fails Pydantic
+# validation (wrong schema), the error + schema are injected as a ToolMessage and
+# the model is given another chance — up to 3 attempts total.
 class ResponderWithRetries:
     def __init__(self, runnable, validator):
         self.runnable = runnable
@@ -91,7 +112,7 @@ class ResponderWithRetries:
                 self.validator.invoke(response)
                 return {"messages": response}
             except ValidationError as e:
-                # Create new messages list with error response
+                # Feed the validation error back so the model can self-correct.
                 new_messages = state["messages"] + [
                     response,
                     ToolMessage(
@@ -105,6 +126,8 @@ class ResponderWithRetries:
         return {"messages": response}
 
 
+# Shared prompt template used by both the drafter and the revisor.
+# {first_instruction} and {function_name} are swapped out per role.
 actor_prompt_template = ChatPromptTemplate.from_messages(
     [
         (
@@ -126,6 +149,7 @@ actor_prompt_template = ChatPromptTemplate.from_messages(
     time=lambda: datetime.datetime.now().isoformat(),
 )
 
+# draft node: produces the first answer + self-critique + search queries
 initial_answer_chain = actor_prompt_template.partial(
     first_instruction="Provide a detailed ~250 word answer.",
     function_name=AnswerQuestion.__name__,
@@ -137,7 +161,9 @@ first_responder = ResponderWithRetries(
     runnable=initial_answer_chain, validator=validator
 )
 
-# REVISION
+# ── STEP 3: revisor ───────────────────────────────────────────────────────────
+# revise node: same prompt template, but now the conversation history includes
+# Tavily search results, so the LLM can ground its revised answer in real sources.
 revise_instructions = """Revise your previous answer using the new information.
         - You should use the previous critique to add important information to your answer.
         - You MUST include numerical citations in your revised answer to ensure it can be verified.
@@ -157,7 +183,9 @@ revision_validator = PydanticToolsParser(tools=[ReviseAnswer])
 revisor = ResponderWithRetries(runnable=revision_chain, validator=revision_validator)
 
 
-# TOOL NODE
+# ── STEP 4: tool execution node ───────────────────────────────────────────────
+# execute_tools node: runs all search queries the LLM produced in bulk.
+# Both AnswerQuestion and ReviseAnswer tool calls are routed here via name aliases.
 def run_queries(search_queries: list[str], **kwargs):
     """Run the generated queries."""
     return tavily_tool.batch([{"query": query} for query in search_queries])
@@ -171,46 +199,48 @@ tool_node = ToolNode(
 )
 
 
-# CONSTRUCT GRAPH
+# ── STEP 5: graph wiring ──────────────────────────────────────────────────────
+# The graph encodes the Reflexion loop:
+#   draft → execute_tools → revise → (back to execute_tools, or END)
 class State(TypedDict):
     messages: Annotated[list, add_messages]
 
 
-MAX_ITERATIONS = 5
+MAX_ITERATIONS = 5  # cap total draft+revise cycles to avoid runaway costs
 builder = StateGraph(State)
 
 builder.add_node("draft", first_responder.respond)
 builder.add_node("execute_tools", tool_node)
 builder.add_node("revise", revisor.respond)
 
-# Add edges
 builder.add_edge(START, "draft")
 builder.add_edge("draft", "execute_tools")
 builder.add_edge("execute_tools", "revise")
 
 
-# Define looping logic:
-def _get_num_iterations(state: list):
+def _get_num_iterations(messages: list):
+    # Count consecutive tool/ai messages from the end — each draft+search+revise
+    # cycle adds 2 AI messages and 1 tool message, so this tracks loop depth.
     i = 0
-    for m in state[::-1]:
+    for m in messages[::-1]:
         if m.type not in {"tool", "ai"}:
             break
         i += 1
     return i
 
 
-def event_loop(state: list):
-    # in our case, we'll just stop after N plans
+def event_loop(state: dict):
+    # After each revision, decide whether to search again or stop.
     num_iterations = _get_num_iterations(state["messages"])
     if num_iterations > MAX_ITERATIONS:
         return END
     return "execute_tools"
 
 
-# revise -> execute_tools OR end
 builder.add_conditional_edges("revise", event_loop, ["execute_tools", END])
 graph = builder.compile(checkpointer=memory)
 
+# ── RUN ───────────────────────────────────────────────────────────────────────
 user_input = {"messages": [("user", "How should we handle the climate crisis?")]}
 
 print()
@@ -221,7 +251,7 @@ graph_config = GraphConfig(nodes=["draft", "execute_tools", "revise"])
 
 prepare_data(exp, graph_config)
 
-# ANALIZA
+# ── ANALYSIS ──────────────────────────────────────────────────────────────────
 print()
 event_log = load_event_log(exp)
 print_analysis(event_log)
