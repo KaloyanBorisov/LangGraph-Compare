@@ -27,7 +27,12 @@ from dotenv import load_dotenv
 from langgraph_compare import *
 
 import shutil, os
-_exp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "experiments", "climate_100")
+
+_exp_dir = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "experiments",
+    "climate_100",
+)
 if os.path.exists(_exp_dir):
     shutil.rmtree(_exp_dir)
 
@@ -37,9 +42,9 @@ memory = exp.memory
 load_dotenv()
 
 # TOOLS
-# llm = ChatOpenAI(model="gpt-4o-mini")
+llm = ChatOpenAI(model="gpt-4o-mini")
 # llm = ChatGroq(model="llama-3.1-8b-instant")
-llm = ChatTogether(model="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo")
+# llm = ChatTogether(model="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo")
 search = TavilySearchAPIWrapper()
 tavily_tool = TavilySearchResults(search=search, max_results=5)
 
@@ -91,8 +96,8 @@ class ResponderWithRetries:
                     response,
                     ToolMessage(
                         content=f"{repr(e)}\n\nPay close attention to the function schema.\n\n"
-                                + json.dumps(self.validator.model_json_schema())
-                                + " Respond by fixing all validation errors.",
+                        + json.dumps(self.validator.model_json_schema())
+                        + " Respond by fixing all validation errors.",
                         tool_call_id=response.tool_calls[0]["id"],
                     ),
                 ]
@@ -121,11 +126,10 @@ actor_prompt_template = ChatPromptTemplate.from_messages(
     time=lambda: datetime.datetime.now().isoformat(),
 )
 
-initial_answer_chain = (
-        actor_prompt_template.partial(
-            first_instruction="Provide a detailed ~250 word answer.",
-            function_name=AnswerQuestion.__name__,
-        ) | llm.bind_tools(tools=[AnswerQuestion]))
+initial_answer_chain = actor_prompt_template.partial(
+    first_instruction="Provide a detailed ~250 word answer.",
+    function_name=AnswerQuestion.__name__,
+) | llm.bind_tools(tools=[AnswerQuestion])
 
 validator = PydanticToolsParser(tools=[AnswerQuestion])
 
@@ -143,19 +147,14 @@ revise_instructions = """Revise your previous answer using the new information.
         - You should use the previous critique to remove superfluous information from your answer and make SURE it is not more than 250 words.
 """
 
-revision_chain = (
-        actor_prompt_template.partial(
-            first_instruction=revise_instructions,
-            function_name=ReviseAnswer.__name__,
-        )
-        | llm.bind_tools(tools=[ReviseAnswer])
-)
+revision_chain = actor_prompt_template.partial(
+    first_instruction=revise_instructions,
+    function_name=ReviseAnswer.__name__,
+) | llm.bind_tools(tools=[ReviseAnswer])
 
 revision_validator = PydanticToolsParser(tools=[ReviseAnswer])
 
-revisor = ResponderWithRetries(
-    runnable=revision_chain, validator=revision_validator
-)
+revisor = ResponderWithRetries(runnable=revision_chain, validator=revision_validator)
 
 
 # TOOL NODE
@@ -212,16 +211,13 @@ def event_loop(state: list):
 builder.add_conditional_edges("revise", event_loop, ["execute_tools", END])
 graph = builder.compile(checkpointer=memory)
 
-user_input = {"messages": [("user",
-                            "How should we handle the climate crisis?")]}
+user_input = {"messages": [("user", "How should we handle the climate crisis?")]}
 
 print()
-run_multiple_iterations(graph, 1, 100, user_input)
+run_multiple_iterations(graph, 1, 5, user_input)
 print()
 
-graph_config = GraphConfig(
-    nodes=["draft", "execute_tools", "revise"]
-)
+graph_config = GraphConfig(nodes=["draft", "execute_tools", "revise"])
 
 prepare_data(exp, graph_config)
 

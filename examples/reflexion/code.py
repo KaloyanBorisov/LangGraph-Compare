@@ -37,9 +37,9 @@ memory = exp.memory
 load_dotenv()
 
 # TOOLS
-# llm = ChatOpenAI(model="gpt-4o-mini")
+llm = ChatOpenAI(model="gpt-4o-mini")
 # llm = ChatGroq(model="llama-3.1-8b-instant")
-llm = ChatTogether(model="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo")
+# llm = ChatTogether(model="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo")
 search = TavilySearchAPIWrapper()
 tavily_tool = TavilySearchResults(search=search, max_results=5)
 
@@ -214,7 +214,7 @@ graph = builder.compile(checkpointer=memory)
 user_input = {"messages": [("user", "How do I implement a secure REST API with rate limiting in Python?")]}
 
 print()
-run_multiple_iterations(graph, 1, 100, user_input)
+run_multiple_iterations(graph, 1, 5, user_input)
 print()
 
 graph_config = GraphConfig(
