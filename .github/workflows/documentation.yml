@@ -32,6 +32,9 @@ jobs:
         run: | 
           cd docs/
           make html
+      - name: Copy comparison reports into site
+        run: |
+          cp -r comparison_reports docs/_build/html/comparison_reports
       - name: Run ghp-import
-        run: | 
+        run: |
           ghp-import -n -p -f docs/_build/html

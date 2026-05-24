@@ -6,6 +6,17 @@ A Python package for **benchmarking, analyzing, and comparing LangGraph multi-ag
 
 Full API reference and guides: https://kaloyanborisov.github.io/LangGraph-Compare/
 
+## Comparison Reports
+
+Interactive HTML reports comparing all architecture experiments (hosted on GitHub Pages):
+
+| Report | Architectures |
+|---|---|
+| [All architectures](https://kaloyanborisov.github.io/LangGraph-Compare/comparison_reports/main_vs_tavily_vs_supervision_vs_hierarchical_vs_network_vs_mcp_math_100_vs_mcp_docs_100.html) | main, tavily, supervision, hierarchical, network, mcp_math, mcp_docs |
+| [Without MCP](https://kaloyanborisov.github.io/LangGraph-Compare/comparison_reports/main_vs_tavily_vs_supervision_vs_hierarchical_vs_network.html) | main, tavily, supervision, hierarchical, network |
+| [main vs tavily](https://kaloyanborisov.github.io/LangGraph-Compare/comparison_reports/main_vs_tavily.html) | main, tavily |
+| [Reflexion variants](https://kaloyanborisov.github.io/LangGraph-Compare/comparison_reports/programming_100_vs_climate_100_vs_math_100.html) | programming, climate, math |
+
 ---
 
 ## Overview
