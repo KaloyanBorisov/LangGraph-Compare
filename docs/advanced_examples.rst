@@ -165,3 +165,83 @@ Notice how:
 * every supervisor has a config (both graph and subgraphs) - but they have a different :code:`supervisor_type`.
 * every graph has a config (both graph and subgraphs) - but they are using different classes: :code:`GraphConfig` or :code:`SubgraphConfig`
 * :code:`GraphConfig` doesn't have :code:`nodes` defined - since they are being taken care of by subgraphs.
+
+MCP — Model Context Protocol
+*****************************
+These examples show how to connect a LangGraph ReAct agent to tools exposed via the
+`Model Context Protocol (MCP) <https://modelcontextprotocol.io/>`_ instead of importing tools directly.
+The agent discovers available tools at runtime from an MCP server — the graph code does not change
+regardless of which server is used.
+
+Both examples use the same two-node ReAct loop:
+
+.. code-block:: text
+
+    START → agent ⇄ tools → END
+
+Because MCP tools are async-only, the graph must run via :code:`astream` instead of :code:`stream`,
+and :code:`AsyncSqliteSaver` must be used in place of the default :code:`SqliteSaver`.
+
+**Extra dependencies required:**
+
+.. code-block:: bash
+
+    pip install langchain-mcp-adapters mcp aiosqlite
+
+MCP — Local Math Server (stdio)
+================================
+:code:`examples/mcp/math_agent.py` connects to a local MCP server (:code:`math_server.py`) that
+exposes arithmetic tools (:code:`add`, :code:`subtract`, :code:`multiply`, :code:`divide`) via the
+:code:`stdio` transport. The client launches the server as a subprocess automatically.
+
+**Example:**
+
+.. code-block:: python
+
+    import asyncio
+    from langchain_openai import ChatOpenAI
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+    from langgraph.prebuilt import create_react_agent
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    from langgraph_compare import create_experiment, GraphConfig, prepare_data, load_event_log, print_analysis, generate_artifacts
+
+    exp = create_experiment("mcp_math")
+    llm = ChatOpenAI(model="gpt-4o-mini")
+
+    MCP_CONFIG = {
+        "math": {
+            "command": "python",
+            "args": ["math_server.py"],
+            "transport": "stdio",
+        }
+    }
+
+    async def main():
+        client = MultiServerMCPClient(MCP_CONFIG)
+        tools = await client.get_tools()
+
+        async with AsyncSqliteSaver.from_conn_string(exp.database) as checkpointer:
+            graph = create_react_agent(llm, tools, checkpointer=checkpointer)
+
+            # ... run iterations, prepare_data, load_event_log, print_analysis, generate_artifacts
+
+    asyncio.run(main())
+
+MCP — Remote Docs Server (HTTP)
+================================
+:code:`examples/mcp/docs_agent.py` connects to the official LangChain documentation MCP server
+over HTTP (:code:`streamable_http` transport). No local server process is needed.
+
+**Example:**
+
+.. code-block:: python
+
+    MCP_CONFIG = {
+        "docs": {
+            "url": "https://docs.langchain.com/mcp",
+            "transport": "streamable_http",
+        }
+    }
+
+The agent uses this config identically to the stdio example — only :code:`MCP_CONFIG` changes.
+The graph structure, checkpointer, and analysis pipeline remain the same.

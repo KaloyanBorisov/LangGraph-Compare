@@ -4,7 +4,7 @@ A Python package for **benchmarking, analyzing, and comparing LangGraph multi-ag
 
 ## Documentation
 
-Full API reference and guides: https://serafinski.github.io/LangGraph-Compare/
+Full API reference and guides: https://kaloyanborisov.github.io/LangGraph-Compare/
 
 ---
 
