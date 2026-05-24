@@ -66,6 +66,30 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "Reflexion - Compare",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/reflexion/compare.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "MCP - Docs Agent",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/mcp/docs_agent.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "MCP - Math Agent",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/mcp/math_agent.py",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "Compare Architectures",
       "type": "debugpy",
       "request": "launch",

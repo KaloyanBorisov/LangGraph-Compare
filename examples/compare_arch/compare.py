@@ -10,6 +10,8 @@ experiment_names = [
     "supervision",
     "hierarchical",
     "network",
+    "mcp_math_100",
+    "mcp_docs_100",
 ]
 
 repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

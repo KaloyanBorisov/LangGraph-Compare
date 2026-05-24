@@ -314,11 +314,43 @@ Three levels of supervision: a meta-supervisor routes between two full sub-teams
 |---|---|---|---|---|---|
 | Basic Chatbot | 1 | 0 | None | Lowest | $ |
 | Tavily | 2 | 0 | Web search | Low | $$ |
+| MCP — Math (stdio) | 2 | 0 | Local arithmetic server | Low | $$ |
+| MCP — Docs (HTTP) | 2 | 0 | Remote LangChain docs server | Low | $$ |
 | Supervision | 3 | 1 | Search + Code | Medium | $$$ |
 | Network | 2 | 0 (peer) | Search + Code | Medium | $$$ |
 | Hierarchical Teams | 8 | 3 (nested) | Search + Scrape + Docs + Code | Highest | $$$$ |
 
 The key design choice is how much coordination overhead you are willing to pay versus how complex the task is. Simpler architectures are cheaper and easier to debug; hierarchical architectures can tackle much harder tasks but multiply LLM calls at every level.
+
+---
+
+### MCP — Model Context Protocol (`examples/mcp/`)
+
+```
+START → agent ⇄ tools → END
+```
+
+A standard ReAct loop where the tools are **not imported directly** — they are discovered at runtime from an MCP server. The agent connects via `MultiServerMCPClient`, fetches the available tools, and proceeds like any other ReAct agent.
+
+The key difference from the Tavily example is the **client-server split**:
+
+- **`math_server.py`** — a separate process that exposes functions (`add`, `subtract`, `multiply`, `divide`) as MCP tools using `FastMCP`. It has no knowledge of LangChain or LangGraph; it just speaks the MCP protocol over stdio.
+- **`math_agent.py`** — the agent. It launches the server as a subprocess, loads its tools at runtime, and builds the graph. You can point `MCP_CONFIG` at any other MCP server (local or HTTP) without changing the agent code.
+
+**Use case:** Connecting an agent to external tool providers (databases, internal APIs, third-party services) through a standardized protocol instead of hard-coding tool imports.  
+**Cost:** Same as ReAct — scales with the number of tool calls the LLM makes.
+
+Two examples are included:
+
+| File | Server | Transport | Question |
+|---|---|---|---|
+| `examples/mcp/math_agent.py` | `math_server.py` (local) | stdio | arithmetic calculation |
+| `examples/mcp/docs_agent.py` | `https://docs.langchain.com/mcp` | HTTP | LangGraph documentation search |
+
+**Extra dependency required:**
+```bash
+pip install langchain-mcp-adapters mcp aiosqlite
+```
 
 ---
 

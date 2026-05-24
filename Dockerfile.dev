@@ -14,7 +14,7 @@ COPY pyproject.toml poetry.lock ./
 
 RUN poetry config virtualenvs.create false \
     && poetry install --with dev,test --no-root \
-    && pip install -q jupyter ipykernel
+    && pip install -q jupyter ipykernel langchain-mcp-adapters mcp aiosqlite
 
 COPY . .
 
