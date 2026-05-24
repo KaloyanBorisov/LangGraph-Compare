@@ -1,6 +1,5 @@
 .env
 experiments/
-comparison_reports/
 __pycache__/
 *.pyc
 *.pyo
