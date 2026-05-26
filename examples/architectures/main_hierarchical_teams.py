@@ -10,7 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from langchain_experimental.utilities import PythonREPL
 from typing_extensions import TypedDict
-from langchain.output_parsers.openai_functions import JsonOutputFunctionsParser
+from langchain_core.output_parsers.openai_tools import JsonOutputKeyToolsParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph, START
@@ -41,12 +41,18 @@ tavily_tool = TavilySearchResults(max_results=5)
 @tool
 def scrape_webpages(urls: List[str]) -> str:
     """Use requests and bs4 to scrape the provided web pages for detailed information."""
-    loader = WebBaseLoader(urls)
-    docs = loader.load()
+    results = []
+    for url in urls:
+        try:
+            loader = WebBaseLoader([url])
+            docs = loader.load()
+            results.extend(docs)
+        except Exception as e:
+            results.append(type("Doc", (), {"metadata": {"title": url}, "page_content": f"[Failed to load: {e}]"})())
     return "\n\n".join(
         [
             f'<Document name="{doc.metadata.get("title", "")}">\n{doc.page_content}\n</Document>'
-            for doc in docs
+            for doc in results
         ]
     )
 
@@ -195,11 +201,12 @@ def create_team_supervisor(llm: ChatOpenAI, system_prompt, members) -> str:
     ).partial(options=str(options), team_members=", ".join(members))
     # bind_functions attaches the route schema so the LLM must call it,
     # then JsonOutputFunctionsParser extracts the chosen "next" value.
+    tool_def = {"type": "function", "function": function_def}
     return (
         prompt
         | trimmer
-        | llm.bind_functions(functions=[function_def], function_call="route")
-        | JsonOutputFunctionsParser()
+        | llm.bind_tools(tools=[tool_def], tool_choice="route")
+        | JsonOutputKeyToolsParser(key_name="route", first_tool_only=True)
     )
 
 

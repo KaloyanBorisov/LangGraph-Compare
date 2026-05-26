@@ -78,7 +78,7 @@ def get_next_node(last_message: BaseMessage, goto: str):
 research_agent = create_react_agent(
     llm,
     tools=[tavily_tool],
-    state_modifier=make_system_prompt(
+    prompt=make_system_prompt(
         "You can only do research. You are working with a chart generator colleague."
     ),
 )
@@ -107,7 +107,7 @@ def research_node(
 chart_agent = create_react_agent(
     llm,
     [python_repl_tool],
-    state_modifier=make_system_prompt(
+    prompt=make_system_prompt(
         "You can only generate charts. You are working with a researcher colleague."
     ),
 )

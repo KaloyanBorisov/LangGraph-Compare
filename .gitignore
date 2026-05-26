@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 *.pyo
 *.png
+.langgraph_api/

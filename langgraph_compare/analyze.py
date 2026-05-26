@@ -149,14 +149,11 @@ def get_sequences(event_log: pd.DataFrame) -> dict[int, list[str]]:
 
     # Budujemy sekwencje dla każdego case_id
     for _, row in event_log.iterrows():
-        # Upewnienie, że case_id jest int'em
         case_id = int(row['case_id'])
         activity = row['activity']
         sequences_by_case[case_id].append(activity)
 
-        # Sortowanie po id
-        sorted_sequences = dict(sorted(sequences_by_case.items()))
-    return sorted_sequences
+    return dict(sorted(sequences_by_case.items()))
 
 
 def print_sequences(event_log: pd.DataFrame) -> None:
@@ -583,8 +580,9 @@ def get_avg_duration(event_log: pd.DataFrame) -> float:
     91.56
     """
     duration = pm4py.get_all_case_durations(event_log)
-    avg = (sum(duration) / len(duration))
-    return avg
+    if not duration:
+        return 0.0
+    return sum(duration) / len(duration)
 
 
 def print_avg_duration(event_log: pd.DataFrame) -> None:
