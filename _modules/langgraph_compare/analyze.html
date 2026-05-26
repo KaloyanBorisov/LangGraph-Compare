@@ -242,14 +242,11 @@
 
     <span class="c1"># Budujemy sekwencje dla każdego case_id</span>
     <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">event_log</span><span class="o">.</span><span class="n">iterrows</span><span class="p">():</span>
-        <span class="c1"># Upewnienie, że case_id jest int&#39;em</span>
         <span class="n">case_id</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;case_id&#39;</span><span class="p">])</span>
         <span class="n">activity</span> <span class="o">=</span> <span class="n">row</span><span class="p">[</span><span class="s1">&#39;activity&#39;</span><span class="p">]</span>
         <span class="n">sequences_by_case</span><span class="p">[</span><span class="n">case_id</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">activity</span><span class="p">)</span>
 
-        <span class="c1"># Sortowanie po id</span>
-        <span class="n">sorted_sequences</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">sequences_by_case</span><span class="o">.</span><span class="n">items</span><span class="p">()))</span>
-    <span class="k">return</span> <span class="n">sorted_sequences</span></div>
+    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">sequences_by_case</span><span class="o">.</span><span class="n">items</span><span class="p">()))</span></div>
 
 
 
@@ -718,8 +715,9 @@
 <span class="sd">    91.56</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">duration</span> <span class="o">=</span> <span class="n">pm4py</span><span class="o">.</span><span class="n">get_all_case_durations</span><span class="p">(</span><span class="n">event_log</span><span class="p">)</span>
-    <span class="n">avg</span> <span class="o">=</span> <span class="p">(</span><span class="nb">sum</span><span class="p">(</span><span class="n">duration</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">duration</span><span class="p">))</span>
-    <span class="k">return</span> <span class="n">avg</span></div>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">duration</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="n">duration</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">duration</span><span class="p">)</span></div>
 
 
 
