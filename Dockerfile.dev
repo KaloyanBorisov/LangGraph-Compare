@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y \
     graphviz \
@@ -13,11 +13,13 @@ WORKDIR /app
 COPY pyproject.toml poetry.lock ./
 
 RUN poetry config virtualenvs.create false \
+    && poetry lock \
     && poetry install --with dev,test --no-root \
-    && pip install -q jupyter ipykernel langchain-mcp-adapters mcp aiosqlite
+    && pip install -q jupyter ipykernel langchain-mcp-adapters mcp aiosqlite \
+    && pip install -U langgraph-api typing_extensions openai
 
 COPY . .
 
-RUN poetry install --with dev,test
+RUN poetry lock && poetry install --with dev,test
 
 CMD ["bash"]

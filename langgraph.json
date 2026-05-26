@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "hierarchical": "./examples/architectures/main_hierarchical_teams_langsmith.py:super_graph"
+  },
+  "env": ".env"
+}

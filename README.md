@@ -17,6 +17,31 @@ Interactive HTML reports comparing all architecture experiments (hosted on GitHu
 | [main vs tavily](https://kaloyanborisov.github.io/LangGraph-Compare/comparison_reports/main_vs_tavily.html) | main, tavily |
 | [Reflexion variants](https://kaloyanborisov.github.io/LangGraph-Compare/comparison_reports/programming_100_vs_climate_100_vs_math_100.html) | programming, climate, math |
 
+## LangGraph Studio
+
+Interactively debug the hierarchical multi-agent architecture in [LangGraph Studio](https://smith.langchain.com/studio/?baseUrl=http://localhost:3000).
+
+**Requirements:** Docker container running with `langgraph dev` (see [Development Setup](#development-setup-poetry)).
+
+**Steps:**
+
+1. Start the dev container:
+   ```bash
+   docker compose up -d dev
+   docker exec -it langgraph-compare-dev bash
+   ```
+2. Inside the container, start the LangGraph API server:
+   ```bash
+   langgraph dev --host 0.0.0.0 --no-reload
+   ```
+3. Open Studio in your browser (server must be running):
+   [https://smith.langchain.com/studio/?baseUrl=http://localhost:3000](https://smith.langchain.com/studio/?baseUrl=http://localhost:3000)
+
+**Example prompts:**
+- `Research the latest developments in quantum computing and summarize the key findings.`
+- `Research the current state of large language models and write a short report about the most important recent advances.`
+- `Research the market share of major cloud providers (AWS, Azure, GCP) and create a chart comparing them.`
+
 ---
 
 ## Overview
