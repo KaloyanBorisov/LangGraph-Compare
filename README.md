@@ -339,6 +339,8 @@ START → test_supervisor → ResearchTeam    (subgraph: rg_supervisor → Searc
 
 Three levels of supervision: a meta-supervisor routes between two full sub-teams, each of which has its own internal supervisor and worker agents. Sub-teams share a working directory for file-based handoffs.
 
+![Hierarchical Agent Teams](examples/architectures/main_hierarchical_teams.jpg)
+
 **Use case:** Long-horizon complex tasks — research a topic, then write and chart a full paper.  
 **Cost:** Highest — many LLM calls across 8 nodes and 3 supervisor layers.
 
