@@ -34,6 +34,15 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "Parallel Stock Analysis",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/architectures/main_parallel_stock_analysis.py",
+      "args": ["HOOD"],
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "Tavily Architecture",
       "type": "debugpy",
       "request": "launch",
